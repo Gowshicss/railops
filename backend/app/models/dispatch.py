@@ -1,34 +1,37 @@
 from datetime import datetime
-from sqlalchemy import Column, String, Integer, DateTime, Text, Boolean
-from app.database import Base
+from dataclasses import dataclass, field, asdict
+from typing import Optional
 
-class DownstreamDispatch(Base):
-    __tablename__ = "downstream_dispatches"
+@dataclass
+class DownstreamDispatch:
+    block_id: str
+    unit_order: int
+    unit_name: str
+    recipient_role: str
+    sent_timestamp: str
+    status: str = "SENT"
+    acknowledged_by: Optional[str] = None
+    acknowledged_time: Optional[str] = None
+    id: Optional[int] = None
+    created_at: datetime = field(default_factory=datetime.utcnow)
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    block_id = Column(String, index=True) # e.g. BR-2026-0138, BR-2026-0142
-    unit_order = Column(Integer, nullable=False) # 1 to 6
-    unit_name = Column(String, nullable=False) # 1. ENGINEERING DEPT, 2. SIGNAL & TELECOM, etc.
-    recipient_role = Column(String, nullable=False) # SSE / Permanent Way (Salem), Section Controller (S&T), etc.
-    sent_timestamp = Column(String, nullable=False) # 10:48:02
-    status = Column(String, default="SENT") # SENT, ACKNOWLEDGED
-    acknowledged_by = Column(String, nullable=True)
-    acknowledged_time = Column(String, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    def to_dict(self):
+        return asdict(self)
 
+@dataclass
+class ActivePossession:
+    block_id: str
+    section: str
+    department: str
+    start_time: str
+    end_time: str
+    trains_affected: int = 0
+    status: str = "ACTIVE"
+    remaining_display: str = "00:28:14"
+    total_seconds_duration: int = 5400
+    elapsed_seconds: int = 1800
+    resource_gang: str = "Gang #4"
+    created_at: datetime = field(default_factory=datetime.utcnow)
 
-class ActivePossession(Base):
-    __tablename__ = "active_possessions"
-
-    block_id = Column(String, primary_key=True, index=True) # e.g. BR-2026-0138, BR-2026-0140, BR-2026-0142
-    section = Column(String, nullable=False) # Chennai - Arakkonam, Salem - Erode
-    department = Column(String, nullable=False) # SIGNAL, ENGINEERING, ELECTRICAL
-    start_time = Column(String, nullable=False) # 10:00, 11:00, 12:10
-    end_time = Column(String, nullable=False)   # 11:30, 13:00, 13:40
-    trains_affected = Column(Integer, default=0)
-    status = Column(String, default="ACTIVE") # ACTIVE, ON SCHEDULE, COMPLETED
-    remaining_display = Column(String, default="00:28:14")
-    total_seconds_duration = Column(Integer, default=5400) # 90 min
-    elapsed_seconds = Column(Integer, default=1800)
-    resource_gang = Column(String, default="Gang #4")
-    created_at = Column(DateTime, default=datetime.utcnow)
+    def to_dict(self):
+        return asdict(self)

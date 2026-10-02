@@ -1,20 +1,20 @@
 from typing import List, Dict, Any
 from datetime import datetime
 from fastapi import APIRouter, Depends, UploadFile, File
-from sqlalchemy.orm import Session
+from pymongo.database import Database
 from app.database import get_db
-from app.models.audit import DataSource, DataImportLog
+from app.models.audit import DataImportLog
 from app.schemas.data_schemas import DataSourceResponse, DataImportLogResponse, QualityReportItem
 
 router = APIRouter(prefix="/api/data", tags=["Data Management"])
 
 @router.get("/sources", response_model=List[DataSourceResponse])
-def get_data_sources(db: Session = Depends(get_db)):
-    return db.query(DataSource).all()
+def get_data_sources(db: Database = Depends(get_db)):
+    return list(db["data_sources"].find({}, {"_id": 0}))
 
 @router.get("/import-logs", response_model=List[DataImportLogResponse])
-def get_import_logs(db: Session = Depends(get_db)):
-    return db.query(DataImportLog).order_by(DataImportLog.import_time.desc()).all()
+def get_import_logs(db: Database = Depends(get_db)):
+    return list(db["data_import_logs"].find({}, {"_id": 0}).sort("import_time", -1))
 
 @router.get("/inventory")
 def get_dataset_inventory():
@@ -102,7 +102,7 @@ def get_quality_report():
     ]
 
 @router.post("/simulate-import")
-def simulate_import(dataset_name: str, db: Session = Depends(get_db)):
+def simulate_import(dataset_name: str, db: Database = Depends(get_db)):
     now = datetime.now()
     imp_id = f"IMP-2026-{now.strftime('%H%M%S')}"
     new_log = DataImportLog(
@@ -117,8 +117,7 @@ def simulate_import(dataset_name: str, db: Session = Depends(get_db)):
         errors=0,
         status="Completed with warnings",
         notes="Imported via standardized RailOps ETL pipeline; schema fields mapped to internal model."
-    )
-    db.add(new_log)
-    db.commit()
-    db.refresh(new_log)
+    ).to_dict()
+    db["data_import_logs"].insert_one(new_log)
+    new_log.pop("_id", None)
     return new_log

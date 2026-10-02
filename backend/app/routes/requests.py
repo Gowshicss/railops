@@ -1,10 +1,10 @@
 from typing import List, Optional
 import random
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
-from app.database import get_db
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException
+from pymongo.database import Database
+from app.database import get_db, get_next_sequence, clean_doc
 from app.models.request import MaintenanceRequest
-from app.models.station import TrackAsset
 from app.models.audit import AuditLog
 from app.schemas.request_schemas import RequestCreate, RequestResponse
 from app.schemas.station_schemas import TrackAssetResponse
@@ -15,17 +15,18 @@ router = APIRouter(prefix="/api/requests", tags=["Requests"])
 def get_requests(
     department: Optional[str] = None,
     status: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Database = Depends(get_db)
 ):
-    query = db.query(MaintenanceRequest)
+    query = {}
     if department and department != "ALL":
-        query = query.filter(MaintenanceRequest.department.ilike(f"%{department}%"))
+        query["department"] = {"$regex": department, "$options": "i"}
     if status:
-        query = query.filter(MaintenanceRequest.status == status)
-    return query.order_by(MaintenanceRequest.created_at.desc()).all()
+        query["status"] = status
+    docs = list(db["maintenance_requests"].find(query, {"_id": 0}).sort("created_at", -1))
+    return docs
 
 @router.post("", response_model=RequestResponse)
-def create_request(data: RequestCreate, db: Session = Depends(get_db)):
+def create_request(data: RequestCreate, db: Database = Depends(get_db)):
     req_num = random.randint(145, 999)
     req_id = f"BR-2026-0{req_num}"
     
@@ -58,10 +59,11 @@ def create_request(data: RequestCreate, db: Session = Depends(get_db)):
         status="SUBMITTED",
         conflict_flag=conflict_flag,
         conflict_summary=conflict_summary
-    )
-    db.add(new_req)
+    ).to_dict()
+    db["maintenance_requests"].insert_one(new_req)
 
     audit = AuditLog(
+        id=get_next_sequence(db, "audit_logs"),
         user=f"{data.department} Supervisor",
         role="ENGINEERING" if "eng" in data.department.lower() else "OPERATOR",
         action="Request Created",
@@ -70,15 +72,15 @@ def create_request(data: RequestCreate, db: Session = Depends(get_db)):
         previous_status=None,
         new_status="SUBMITTED",
         comments=f"Maintenance requisition submitted for {data.segment}"
-    )
-    db.add(audit)
-    db.commit()
-    db.refresh(new_req)
+    ).to_dict()
+    db["audit_logs"].insert_one(audit)
+
+    new_req.pop("_id", None)
     return new_req
 
 @router.get("/{request_id}", response_model=RequestResponse)
-def get_request(request_id: str, db: Session = Depends(get_db)):
-    req = db.query(MaintenanceRequest).filter(MaintenanceRequest.request_id == request_id).first()
+def get_request(request_id: str, db: Database = Depends(get_db)):
+    req = db["maintenance_requests"].find_one({"request_id": request_id}, {"_id": 0})
     if not req:
         raise HTTPException(status_code=404, detail="Request not found")
     return req
@@ -87,11 +89,11 @@ def get_request(request_id: str, db: Session = Depends(get_db)):
 def get_assets_inventory(
     dept_ref: Optional[str] = None,
     status: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Database = Depends(get_db)
 ):
-    query = db.query(TrackAsset)
+    query = {}
     if dept_ref and dept_ref != "ALL":
-        query = query.filter(TrackAsset.dept_ref == dept_ref)
+        query["dept_ref"] = dept_ref
     if status and status != "ALL":
-        query = query.filter(TrackAsset.status == status)
-    return query.all()
+        query["status"] = status
+    return list(db["track_assets"].find(query, {"_id": 0}))

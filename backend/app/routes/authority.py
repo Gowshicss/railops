@@ -1,9 +1,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from pymongo.database import Database
 from app.database import get_db
-from app.models.plan import MaintenancePlan, PlanDecision
-from app.models.dispatch import DownstreamDispatch
 from app.schemas.plan_schemas import (
     PlanResponse,
     PlanApproveRequest,
@@ -17,14 +15,14 @@ from app.services.approval_service import approve_plan, modify_plan, reject_plan
 router = APIRouter(prefix="/api/authority", tags=["Authority"])
 
 @router.get("/pending", response_model=List[PlanResponse])
-def get_pending_authority_plans(db: Session = Depends(get_db)):
-    # Returns plans sent for approval or generated
-    return db.query(MaintenancePlan).filter(
-        MaintenancePlan.status.in_(["SENT FOR APPROVAL", "GENERATED"])
-    ).all()
+def get_pending_authority_plans(db: Database = Depends(get_db)):
+    return list(db["maintenance_plans"].find(
+        {"status": {"$in": ["SENT FOR APPROVAL", "GENERATED"]}},
+        {"_id": 0}
+    ))
 
 @router.post("/approve", response_model=PlanResponse)
-def approve_plan_route(data: PlanApproveRequest, db: Session = Depends(get_db)):
+def approve_plan_route(data: PlanApproveRequest, db: Database = Depends(get_db)):
     try:
         plan = approve_plan(
             db=db,
@@ -38,7 +36,7 @@ def approve_plan_route(data: PlanApproveRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail=str(e))
 
 @router.post("/modify", response_model=PlanResponse)
-def modify_plan_route(data: PlanModifyRequest, db: Session = Depends(get_db)):
+def modify_plan_route(data: PlanModifyRequest, db: Database = Depends(get_db)):
     try:
         plan = modify_plan(
             db=db,
@@ -57,7 +55,7 @@ def modify_plan_route(data: PlanModifyRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail=str(e))
 
 @router.post("/reject", response_model=PlanResponse)
-def reject_plan_route(data: PlanRejectRequest, db: Session = Depends(get_db)):
+def reject_plan_route(data: PlanRejectRequest, db: Database = Depends(get_db)):
     try:
         plan = reject_plan(
             db=db,
@@ -72,17 +70,18 @@ def reject_plan_route(data: PlanRejectRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail=str(e))
 
 @router.get("/dispatches/{block_id}", response_model=List[DispatchResponse])
-def get_block_dispatches(block_id: str, db: Session = Depends(get_db)):
-    return db.query(DownstreamDispatch).filter(
-        DownstreamDispatch.block_id == block_id
-    ).order_by(DownstreamDispatch.unit_order.asc()).all()
+def get_block_dispatches(block_id: str, db: Database = Depends(get_db)):
+    return list(db["downstream_dispatches"].find(
+        {"block_id": block_id},
+        {"_id": 0}
+    ).sort("unit_order", 1))
 
 @router.get("/decisions", response_model=List[DecisionResponse])
 def get_decisions_history(
     decision: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Database = Depends(get_db)
 ):
-    query = db.query(PlanDecision)
+    query = {}
     if decision and decision != "ALL":
-        query = query.filter(PlanDecision.decision == decision)
-    return query.order_by(PlanDecision.id.desc()).all()
+        query["decision"] = decision
+    return list(db["plan_decisions"].find(query, {"_id": 0}).sort("id", -1))

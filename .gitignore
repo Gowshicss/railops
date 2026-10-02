@@ -5,7 +5,10 @@ frontend/node_modules/
 # Environment files
 .env
 .env.*
+backend/.env
+backend/.env.*
 !.env.example
+!backend/.env.example
 
 # Python
 __pycache__/

@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.database import engine, Base, SessionLocal
+from app.database import get_db_instance, init_indexes
 from app.services.seed_data import seed_database
 from app.routes.requests import router as requests_router
 from app.routes.plans import router as plans_router
@@ -12,15 +12,10 @@ from app.routes.schedules import router as schedules_router
 from app.routes.data_management import router as data_router
 from app.routes.audit import router as audit_router
 
-# Create tables
-Base.metadata.create_all(bind=engine)
-
-# Seed database with initial dataset
-db = SessionLocal()
-try:
-    seed_database(db)
-finally:
-    db.close()
+# Initialize MongoDB indexes and seed initial dataset
+mongo_db = get_db_instance()
+init_indexes(mongo_db)
+seed_database(mongo_db)
 
 app = FastAPI(
     title="RailOps Central API",
@@ -64,7 +59,7 @@ def root_info():
 def health():
     return {
         "status": "healthy",
-        "database": "sqlite/railops.db",
+        "database": f"mongodb/{getattr(mongo_db, 'name', 'railops')}",
         "gateway": "CRIS FOIS CONNECTED",
         "latency_ms": 14
     }

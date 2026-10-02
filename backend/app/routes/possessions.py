@@ -1,8 +1,7 @@
 from typing import List
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from pymongo.database import Database
 from app.database import get_db
-from app.models.dispatch import ActivePossession
 from app.schemas.plan_schemas import ActivePossessionResponse
 from app.schemas.station_schemas import MaintenanceHistoryResponse, MaintenanceCompleteRequest
 from app.services.possession_service import complete_maintenance_block
@@ -10,11 +9,11 @@ from app.services.possession_service import complete_maintenance_block
 router = APIRouter(prefix="/api/possessions", tags=["Possessions"])
 
 @router.get("/active", response_model=List[ActivePossessionResponse])
-def get_active_possessions(db: Session = Depends(get_db)):
-    return db.query(ActivePossession).order_by(ActivePossession.created_at.desc()).all()
+def get_active_possessions(db: Database = Depends(get_db)):
+    return list(db["active_possessions"].find({}, {"_id": 0}).sort("created_at", -1))
 
 @router.post("/complete", response_model=MaintenanceHistoryResponse)
-def complete_possession(data: MaintenanceCompleteRequest, db: Session = Depends(get_db)):
+def complete_possession(data: MaintenanceCompleteRequest, db: Database = Depends(get_db)):
     try:
         history_entry = complete_maintenance_block(
             db=db,

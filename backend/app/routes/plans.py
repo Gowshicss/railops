@@ -1,9 +1,7 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
+from pymongo.database import Database
 from app.database import get_db
-from app.models.plan import MaintenancePlan
-from app.models.request import MaintenanceRequest
 from app.schemas.plan_schemas import PlanResponse, PlanGenerateRequest
 from app.services.planning_engine import analyze_and_generate_plans
 from app.services.approval_service import send_plan_to_authority
@@ -14,17 +12,17 @@ router = APIRouter(prefix="/api/plans", tags=["Plans"])
 def get_plans(
     request_id: Optional[str] = None,
     status: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Database = Depends(get_db)
 ):
-    query = db.query(MaintenancePlan)
+    query = {}
     if request_id:
-        query = query.filter(MaintenancePlan.request_id == request_id)
+        query["request_id"] = request_id
     if status:
-        query = query.filter(MaintenancePlan.status == status)
-    return query.all()
+        query["status"] = status
+    return list(db["maintenance_plans"].find(query, {"_id": 0}))
 
 @router.post("/generate", response_model=List[PlanResponse])
-def generate_plans(data: PlanGenerateRequest, db: Session = Depends(get_db)):
+def generate_plans(data: PlanGenerateRequest, db: Database = Depends(get_db)):
     try:
         plans = analyze_and_generate_plans(db, data.request_id)
         return plans
@@ -32,13 +30,10 @@ def generate_plans(data: PlanGenerateRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail=str(e))
 
 @router.get("/optimization/status")
-def get_solver_status(db: Session = Depends(get_db)):
-    # Counts
-    requests_evaluated = db.query(MaintenanceRequest).count()
-    conflicts_detected = db.query(MaintenanceRequest).filter(
-        MaintenanceRequest.conflict_flag == "CONFLICT DETECTED"
-    ).count()
-    plans_generated = db.query(MaintenancePlan).count()
+def get_solver_status(db: Database = Depends(get_db)):
+    requests_evaluated = db["maintenance_requests"].count_documents({})
+    conflicts_detected = db["maintenance_requests"].count_documents({"conflict_flag": "CONFLICT DETECTED"})
+    plans_generated = db["maintenance_plans"].count_documents({})
     
     return {
         "solver": "OR-TOOLS MILP ENGINE",
@@ -68,7 +63,7 @@ def get_solver_status(db: Session = Depends(get_db)):
     }
 
 @router.put("/{plan_id}/send", response_model=PlanResponse)
-def send_to_authority_route(plan_id: str, db: Session = Depends(get_db)):
+def send_to_authority_route(plan_id: str, db: Database = Depends(get_db)):
     try:
         plan = send_plan_to_authority(db, plan_id)
         return plan
@@ -76,8 +71,8 @@ def send_to_authority_route(plan_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail=str(e))
 
 @router.get("/{plan_id}", response_model=PlanResponse)
-def get_plan(plan_id: str, db: Session = Depends(get_db)):
-    plan = db.query(MaintenancePlan).filter(MaintenancePlan.plan_id == plan_id).first()
+def get_plan(plan_id: str, db: Database = Depends(get_db)):
+    plan = db["maintenance_plans"].find_one({"plan_id": plan_id}, {"_id": 0})
     if not plan:
         raise HTTPException(status_code=404, detail="Plan not found")
     return plan

@@ -1,15 +1,19 @@
 from datetime import datetime
-from sqlalchemy.orm import Session
+from pymongo.database import Database
 from app.models.station import Station, RailwaySection, TrackAsset, StationMaintenanceHistory
 from app.models.request import MaintenanceRequest
-from app.models.plan import MaintenancePlan, PlanDecision
-from app.models.train import Train, TrainSchedule, TrainMovement
+from app.models.plan import MaintenancePlan
+from app.models.train import Train
 from app.models.dispatch import DownstreamDispatch, ActivePossession
 from app.models.audit import AuditLog, DataSource, DataImportLog
+from app.database import init_indexes
 
-def seed_database(db: Session):
-    # Only seed if stations table is empty
-    if db.query(Station).first():
+def seed_database(db: Database):
+    # Ensure indexes are established
+    init_indexes(db)
+
+    # Only seed if stations collection is empty
+    if db["stations"].find_one():
         return
 
     # 1. STATIONS
@@ -23,12 +27,15 @@ def seed_database(db: Session):
         ("TPJ", "Tiruchchirappalli Junction", "SR", "Trichy Division", "KM 140.0 TPJ", 10.7905, 78.7047, 24, "17 Sep 2026", "Engineering, S&T", "OPERATIONAL"),
         ("MDU", "Madurai Junction", "SR", "Madurai Division", "KM 297.0 MDU", 9.9252, 78.1198, 22, "16 Sep 2026", "Engineering, TRD", "OPERATIONAL"),
     ]
-    for code, name, zone, div, loc, lat, lon, works, last_dt, depts, st in stations_data:
-        db.add(Station(
+    station_docs = [
+        Station(
             station_code=code, station_name=name, zone=zone, division=div,
             location=loc, latitude=lat, longitude=lon, total_maintenance_works=works,
             last_maintenance_date=last_dt, departments_involved=depts, current_status=st
-        ))
+        ).to_dict()
+        for code, name, zone, div, loc, lat, lon, works, last_dt, depts, st in stations_data
+    ]
+    db["stations"].insert_many(station_docs)
 
     # 2. RAILWAY SECTIONS
     sections_data = [
@@ -40,14 +47,17 @@ def seed_database(db: Session):
         ("SEC-SA-TPJ", "Salem - Trichy", "SA", "TPJ", 0.0, 140.0, "SINGLE LINE", 100, "YES (25KV AC)"),
         ("SEC-TPJ-MDU", "Trichy - Madurai", "TPJ", "MDU", 0.0, 157.0, "DOUBLE LINE", 110, "YES (25KV AC)"),
     ]
-    for s_id, name, f_code, t_code, km_s, km_e, l_type, spd, elec in sections_data:
-        db.add(RailwaySection(
+    section_docs = [
+        RailwaySection(
             section_id=s_id, section_name=name, from_station_code=f_code,
             to_station_code=t_code, km_start=km_s, km_end=km_e,
             line_type=l_type, max_speed_kmh=spd, electrified=elec
-        ))
+        ).to_dict()
+        for s_id, name, f_code, t_code, km_s, km_e, l_type, spd, elec in sections_data
+    ]
+    db["railway_sections"].insert_many(section_docs)
 
-    # 3. TRACK ASSETS (Matching Panel 1 Screenshot 2)
+    # 3. TRACK ASSETS
     assets_data = [
         ("TMS-001", "Engineering", "TMS", "Track", "Track Inspection (Ultrasonic USFD)", "KM 102/4 UP", "SA", "HIGH", "18 SEP 2026", "COMPLETED", "18 Sep 2026", "Good"),
         ("TMS-002", "Engineering", "TMS", "Track", "Thermit Weld Repair & Destressing", "KM 98/7 DN", "SA", "CRITICAL", "20 SEP 2026", "OVERDUE", "10 Aug 2026", "Requires Weld Grinding"),
@@ -57,15 +67,18 @@ def seed_database(db: Session):
         ("TMS-006", "Engineering", "TMS", "Track", "Deep Screening Machine Ballast Cleaning", "KM 334/12 - 338/04", "SA", "HIGH", "26 SEP 2026", "REQUESTED", "12 May 2026", "High Fouling Index"),
         ("SMMS-007", "S&T", "SMMS", "Signal", "Axle Counter Interlock Point 42B Overhaul", "Point 42B SA", "SA", "CRITICAL", "26 SEP 2026", "OVERDUE", "18 Jul 2026", "G&SR-24 Restriction Active"),
     ]
-    for a_id, dept, d_ref, a_type, desc, loc, st_code, prio, sch, st, last_m, cond in assets_data:
-        db.add(TrackAsset(
+    asset_docs = [
+        TrackAsset(
             asset_id=a_id, department=dept, dept_ref=d_ref, asset_type=a_type,
             activity_description=desc, location=loc, station_code=st_code,
             priority=prio, schedule_date=sch, status=st,
             last_maintenance_date=last_m, condition_rating=cond
-        ))
+        ).to_dict()
+        for a_id, dept, d_ref, a_type, desc, loc, st_code, prio, sch, st, last_m, cond in assets_data
+    ]
+    db["track_assets"].insert_many(asset_docs)
 
-    # 4. MAINTENANCE REQUESTS (Matching Panel 2 & Panel 1 Screenshots)
+    # 4. MAINTENANCE REQUESTS
     reqs_data = [
         ("BR-2026-0142", "Engineering", "TMS", "SA", "SR", "Salem - Erode (KM 334/12 - 338/04)", "UP LINE", "TMS-006",
          "TRACK MAINTENANCE", "Deep screening machine and track destressing between Salem and Erode", "2026-09-26", "11:30", "13:00", 90, "HIGH", "High", "Tier-1",
@@ -79,17 +92,20 @@ def seed_database(db: Session):
          "OHE 25KV MAINTENANCE", "OHE catenary contact wire replacement and tension verification", "2026-09-27", "09:30", "11:30", 120, "MEDIUM", "Standard", "Tier-2",
          "Routine 60-day contact wire wear cycle check", "SUBMITTED", "PENDING", "Evaluating morning goods freight slots"),
     ]
-    for r_id, dept, d_ref, s_code, zone, seg, trk, a_id, m_type, desc, dt, s_time, e_time, dur, prio, urg, crit, rsn, st, c_flg, c_sum in reqs_data:
-        db.add(MaintenanceRequest(
+    req_docs = [
+        MaintenanceRequest(
             request_id=r_id, department=dept, dept_ref=d_ref, station_code=s_code,
             zone=zone, segment=seg, track=trk, asset_id=a_id, maintenance_type=m_type,
             description=desc, requested_date=dt, requested_start_time=s_time,
             requested_end_time=e_time, duration_minutes=dur, priority=prio,
             urgency=urg, asset_criticality=crit, reason=rsn, status=st,
             conflict_flag=c_flg, conflict_summary=c_sum
-        ))
+        ).to_dict()
+        for r_id, dept, d_ref, s_code, zone, seg, trk, a_id, m_type, desc, dt, s_time, e_time, dur, prio, urg, crit, rsn, st, c_flg, c_sum in reqs_data
+    ]
+    db["maintenance_requests"].insert_many(req_docs)
 
-    # Pre-generate plans for BR-2026-0142 so Panel 2 & Panel 3 are instantly rich
+    # 5. PRE-GENERATED PLANS FOR BR-2026-0142
     plan_a = MaintenancePlan(
         plan_id="PLAN-BR-2026-0142-A",
         plan_code="PLAN A",
@@ -119,7 +135,8 @@ def seed_database(db: Session):
         is_recommended=True,
         tier_resolution="TIER-1 RESOLUTION",
         status="SENT FOR APPROVAL"
-    )
+    ).to_dict()
+
     plan_b = MaintenancePlan(
         plan_id="PLAN-BR-2026-0142-B",
         plan_code="PLAN B",
@@ -149,7 +166,8 @@ def seed_database(db: Session):
         is_recommended=False,
         tier_resolution="TIER-2 RESOLUTION",
         status="GENERATED"
-    )
+    ).to_dict()
+
     plan_c = MaintenancePlan(
         plan_id="PLAN-BR-2026-0142-C",
         plan_code="PLAN C",
@@ -179,12 +197,11 @@ def seed_database(db: Session):
         is_recommended=False,
         tier_resolution="TIER-2 RESOLUTION",
         status="GENERATED"
-    )
-    db.add(plan_a)
-    db.add(plan_b)
-    db.add(plan_c)
+    ).to_dict()
 
-    # 5. DOWNSTREAM DISPATCHES (Matching Panel 3 Screenshot 1)
+    db["maintenance_plans"].insert_many([plan_a, plan_b, plan_c])
+
+    # 6. DOWNSTREAM DISPATCHES
     dispatches = [
         ("BR-2026-0138", 1, "1. ENGINEERING DEPT", "SSE / Permanent Way (Salem)", "10:48:02", "SENT", None, None),
         ("BR-2026-0138", 2, "2. SIGNAL & TELECOM", "Section Controller (S&T)", "10:48:04", "SENT", None, None),
@@ -193,41 +210,51 @@ def seed_database(db: Session):
         ("BR-2026-0138", 5, "5. DIVISION CONTROL", "DRM Operations Cell", "10:48:08", "SENT", None, None),
         ("BR-2026-0138", 6, "6. MAINTENANCE CREW", "Gang #4 Supervisor (Field Terminal)", "10:48:10", "ACKNOWLEDGED", "Gang #4 Supervisor", "10:48:12"),
     ]
-    for b_id, order, u_name, role, t_stamp, st, ack_by, ack_t in dispatches:
-        db.add(DownstreamDispatch(
+    dispatch_docs = []
+    for idx, (b_id, order, u_name, role, t_stamp, st, ack_by, ack_t) in enumerate(dispatches, start=1):
+        d = DownstreamDispatch(
             block_id=b_id, unit_order=order, unit_name=u_name,
             recipient_role=role, sent_timestamp=t_stamp, status=st,
-            acknowledged_by=ack_by, acknowledged_time=ack_t
-        ))
+            acknowledged_by=ack_by, acknowledged_time=ack_t, id=idx
+        ).to_dict()
+        dispatch_docs.append(d)
+    db["downstream_dispatches"].insert_many(dispatch_docs)
+    db["counters"].update_one({"_id": "downstream_dispatches"}, {"$set": {"seq": len(dispatch_docs)}}, upsert=True)
 
-    # 6. ACTIVE POSSESSION REGISTER (Matching Panel 3 Screenshot 1)
+    # 7. ACTIVE POSSESSION REGISTER
     possessions = [
         ("BR-2026-0138", "Chennai - Arakkonam", "SIGNAL", "10:00", "11:30", 2, "ACTIVE", "00:28:14", 5400, 3600, "Gang #1 (MAS)"),
         ("BR-2026-0140", "Salem - Erode", "ENGINEERING", "11:00", "13:00", 3, "ACTIVE", "01:05:32", 7200, 3300, "Gang #4 (Salem)"),
         ("BR-2026-0142", "Salem - Erode (MNT-3)", "ENGINEERING", "12:10", "13:40", 0, "ON SCHEDULE", "START IN 00:55", 5400, 0, "Gang #4 & TAMP"),
     ]
-    for b_id, sec, dept, st_t, e_t, tr_aff, st, rem, tot_s, el_s, gng in possessions:
-        db.add(ActivePossession(
+    possession_docs = [
+        ActivePossession(
             block_id=b_id, section=sec, department=dept, start_time=st_t,
             end_time=e_t, trains_affected=tr_aff, status=st,
             remaining_display=rem, total_seconds_duration=tot_s,
             elapsed_seconds=el_s, resource_gang=gng
-        ))
+        ).to_dict()
+        for b_id, sec, dept, st_t, e_t, tr_aff, st, rem, tot_s, el_s, gng in possessions
+    ]
+    db["active_possessions"].insert_many(possession_docs)
 
-    # 7. TRAINS & SCHEDULES
+    # 8. TRAINS
     trains = [
         ("12675", "Kovai Superfast Express", "SUPERFAST EXPRESS", "MAS", "CBE", "South Corridor", 1, False),
         ("12691", "Nilgiri Express", "SUPERFAST EXPRESS", "MAS", "CBE", "South Corridor", 1, False),
         ("0942", "Container Freight Rake", "FREIGHT", "MAS", "ED", "South Corridor", 3, True),
     ]
-    for num, name, t_type, orig, dest, corr, prio, goods in trains:
-        db.add(Train(
+    train_docs = [
+        Train(
             train_number=num, train_name=name, train_type=t_type,
             origin=orig, destination=dest, corridor=corr, priority=prio,
             goods_train_indicator=goods
-        ))
+        ).to_dict()
+        for num, name, t_type, orig, dest, corr, prio, goods in trains
+    ]
+    db["trains"].insert_many(train_docs)
 
-    # 8. STATION MAINTENANCE HISTORY (Panel 4)
+    # 9. STATION MAINTENANCE HISTORY
     history_entries = [
         ("MNT-10482", "SA", "Salem Junction", "Engineering", "TMS-001", "Track 2", "Preventive Maintenance", "18 Sep 2026", 2026, "September", "18:00", "20:00", "2 hours", "Rail Joint RJ-204 maintenance and ultrasonic testing", "Completed", "Gang #4"),
         ("MNT-10481", "MAS", "Chennai Central", "S&T", "SMMS-004", "Platform 1", "Signal Inspection", "15 Sep 2026", 2026, "September", "01:00", "03:00", "2 hours", "Axle counter calibration and sensitivity renewal", "Completed", "S&T Team 1"),
@@ -239,68 +266,77 @@ def seed_database(db: Session):
         ("MNT-10475", "CBE", "Coimbatore Junction", "Engineering", "TMS-007", "Track 3", "Platform Maintenance", "05 Sep 2026", 2026, "September", "14:00", "17:00", "3 hours", "Track ballast renewal and edge clearance", "Completed", "Gang #2"),
         ("MNT-10474", "CBE", "Coimbatore Junction", "TRD", "TDMS-004", "Track 2", "Electrical Maintenance", "14 Aug 2026", 2026, "August", "00:00", "03:00", "3 hours", "Substation transformer relay testing", "Completed", "TRD Gang CBE"),
     ]
-    for m_id, s_code, s_name, dept, a_id, trk, m_type, dt, yr, mo, s_time, e_time, dur, desc, st, gng in history_entries:
-        db.add(StationMaintenanceHistory(
+    history_docs = [
+        StationMaintenanceHistory(
             maintenance_id=m_id, station_code=s_code, station_name=s_name,
             department=dept, asset_id=a_id, track=trk, maintenance_type=m_type,
             date=dt, year=yr, month=mo, start_time=s_time, end_time=e_time,
             duration_str=dur, description=desc, status=st, crew_gang=gng
-        ))
+        ).to_dict()
+        for m_id, s_code, s_name, dept, a_id, trk, m_type, dt, yr, mo, s_time, e_time, dur, desc, st, gng in history_entries
+    ]
+    db["station_maintenance_history"].insert_many(history_docs)
 
-    # 9. DATA SOURCES & AUDIT LOGS
-    db.add(DataSource(
-        source_id="SRC-001",
-        source_name="Indian Railways Southern Railway Master Corridor Register",
-        source_type="CSV",
-        file_name="sr_corridor_master_2026.csv",
-        source_url="internal://cris/fois/sr_feed",
-        description="Official Southern Railway sectional asset and chainage register"
-    ))
-    db.add(DataSource(
-        source_id="SRC-002",
-        source_name="Control Office Application (COA) Train Schedules",
-        source_type="API",
-        file_name="coa_live_schedules.json",
-        source_url="https://fois.indianrail.gov.in/api/coa",
-        description="Real-time train running and path allocation gateway"
-    ))
+    # 10. DATA SOURCES & AUDIT LOGS
+    db["data_sources"].insert_many([
+        DataSource(
+            source_id="SRC-001",
+            source_name="Indian Railways Southern Railway Master Corridor Register",
+            source_type="CSV",
+            file_name="sr_corridor_master_2026.csv",
+            source_url="internal://cris/fois/sr_feed",
+            description="Official Southern Railway sectional asset and chainage register"
+        ).to_dict(),
+        DataSource(
+            source_id="SRC-002",
+            source_name="Control Office Application (COA) Train Schedules",
+            source_type="API",
+            file_name="coa_live_schedules.json",
+            source_url="https://fois.indianrail.gov.in/api/coa",
+            description="Real-time train running and path allocation gateway"
+        ).to_dict(),
+    ])
 
-    db.add(DataImportLog(
-        import_id="IMP-2026-001",
-        filename="sr_track_assets.csv",
-        source_type="CSV",
-        total_rows=1420,
-        successful_rows=1418,
-        failed_rows=2,
-        duplicate_rows=0,
-        warnings=5,
-        errors=0,
-        status="Completed with warnings",
-        notes="2 records flagged with non-standard chainage formatting; successfully mapped to default section"
-    ))
-    db.add(DataImportLog(
-        import_id="IMP-2026-002",
-        filename="coa_south_corridor_timings.json",
-        source_type="JSON",
-        total_rows=850,
-        successful_rows=850,
-        failed_rows=0,
-        duplicate_rows=0,
-        warnings=0,
-        errors=0,
-        status="Completed",
-        notes="All scheduled paths ingested into train_schedules table with zero conflicts"
-    ))
+    db["data_import_logs"].insert_many([
+        DataImportLog(
+            import_id="IMP-2026-001",
+            filename="sr_track_assets.csv",
+            source_type="CSV",
+            total_rows=1420,
+            successful_rows=1418,
+            failed_rows=2,
+            duplicate_rows=0,
+            warnings=5,
+            errors=0,
+            status="Completed with warnings",
+            notes="2 records flagged with non-standard chainage formatting; successfully mapped to default section"
+        ).to_dict(),
+        DataImportLog(
+            import_id="IMP-2026-002",
+            filename="coa_south_corridor_timings.json",
+            source_type="JSON",
+            total_rows=850,
+            successful_rows=850,
+            failed_rows=0,
+            duplicate_rows=0,
+            warnings=0,
+            errors=0,
+            status="Completed",
+            notes="All scheduled paths ingested into train_schedules table with zero conflicts"
+        ).to_dict(),
+    ])
 
-    db.add(AuditLog(
-        user="R. Krishnan",
-        role="PLANNER",
-        action="System Initialized",
-        entity_type="SYSTEM",
-        entity_id="SYS-START",
-        previous_status=None,
-        new_status="ONLINE",
-        comments="RailOps Southern Railway production cluster initialized and synchronized"
-    ))
-
-    db.commit()
+    db["audit_logs"].insert_one(
+        AuditLog(
+            id=1,
+            user="R. Krishnan",
+            role="PLANNER",
+            action="System Initialized",
+            entity_type="SYSTEM",
+            entity_id="SYS-START",
+            previous_status=None,
+            new_status="ONLINE",
+            comments="RailOps Southern Railway production cluster initialized on MongoDB Atlas"
+        ).to_dict()
+    )
+    db["counters"].update_one({"_id": "audit_logs"}, {"$set": {"seq": 1}}, upsert=True)
