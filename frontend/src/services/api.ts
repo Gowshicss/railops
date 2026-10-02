@@ -16,7 +16,20 @@ import {
   AuditLogItem
 } from '../types/railops';
 
-const API_BASE = '/api';
+// Determine the base API URL dynamically:
+// 1. If VITE_API_URL is configured (e.g. in production on Vercel), route requests to that host with /api
+// 2. If unset (e.g. localhost dev), use '/api' to leverage Vite's local proxy to FastAPI
+const rawApiUrl = import.meta.env.VITE_API_URL?.trim();
+
+const getApiBaseUrl = (): string => {
+  if (!rawApiUrl) {
+    return '/api';
+  }
+  const cleanUrl = rawApiUrl.replace(/\/+$/, '');
+  return cleanUrl.endsWith('/api') ? cleanUrl : `${cleanUrl}/api`;
+};
+
+const API_BASE = getApiBaseUrl();
 
 const client = axios.create({
   baseURL: API_BASE,
